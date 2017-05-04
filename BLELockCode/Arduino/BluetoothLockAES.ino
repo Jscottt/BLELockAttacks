@@ -1,10 +1,9 @@
 // Bluetooth Low Energy Lock
-// (c) 2014 Don Coleman
-// 
-// Bluefruit LE http://adafru.it/1697
-// Solenoid Lock http://adafru.it/1512
-// https://github.com/adafruit/Adafruit_nRF8001
+// (c) Joe Scott, produced using code by Don Coleman.
+//Base code: http://github.com/don/BluetoothLock.git
 
+
+#include <AESLib.h>
 #include <SPI.h>
 #include "Adafruit_BLE_UART.h"
 
@@ -18,47 +17,59 @@
 #define ADAFRUITBLE_RDY 2 // interrupt pin 2 or 3 on UNO
 #define ADAFRUITBLE_RST 9
 
+uint8_t key[] = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15};
+
 long secret = 12345;
+
 long openTime = 0;
-// Status from the Bluefruit LE driver
+
+// Default status from the Bluefruit LE driver
 int lastStatus = ACI_EVT_DISCONNECTED;
 
+//Create BTLESerial object providing
 Adafruit_BLE_UART BTLEserial = Adafruit_BLE_UART(ADAFRUITBLE_REQ, ADAFRUITBLE_RDY, ADAFRUITBLE_RST);
 
 void setup() {
+  //Set data rate
   Serial.begin(9600);
-  Serial.println(F("BLE Safe - Adafruit Bluefruit Low Energy Edition"));
+  //Begin BTLE serial service
+  Serial.println(F("BLE Lock"));
+
   BTLEserial.begin();
 
+  //Set pin modes and initial values (LOW)
   pinMode(LOCK_PIN, OUTPUT);
   pinMode(RED_LED_PIN, OUTPUT);
-  pinMode(GREEN_LED_PIN, OUTPUT);  
+  pinMode(GREEN_LED_PIN, OUTPUT);
   digitalWrite(LOCK_PIN, LOW);
   digitalWrite(RED_LED_PIN, LOW);
-  digitalWrite(GREEN_LED_PIN, LOW); 
+  digitalWrite(GREEN_LED_PIN, LOW);
 }
 
 void loop() {
 
-  // Tell the nRF8001 to do whatever it should be working on
   BTLEserial.pollACI();
 
+  //Check if the status has changed
   int status = BTLEserial.getState();
-      
+
   if (status != lastStatus) {
+
     if (status == ACI_EVT_DEVICE_STARTED) {
-      Serial.println(F("* Advertising Started"));
-    } 
+      Serial.println(F("*Advertising..."));
+    }
+
     else if (status == ACI_EVT_CONNECTED) {
-      Serial.println(F("* Connected!"));
-    }     
+      Serial.println(F("*Connected..."));
+    }
+
     else if (status == ACI_EVT_DISCONNECTED) {
-      Serial.println(F("* Disconnected or advertising timed out."));
-    } 
+      Serial.println(F("*Disconnected..."));
+    }
     // save for next loop
     lastStatus = status;
   }
-    
+
   if (status == ACI_EVT_CONNECTED) {
     
     // see if there's any data from bluetooth
@@ -70,40 +81,50 @@ void loop() {
 
     // keeping u + code for compatibility with the serial api
     if (BTLEserial.find("u")) {
-      int code = BTLEserial.parseInt();
+      String scode = BTLEserial.readString();
+      char *ccode = &scode[0];
+      aes128_dec_single(key, ccode);
+      int code = atoi(ccode);
       openLock(code);
     }
+
+      // keeping k + code for compatibility with the serial api
+//     if (BTLEserial.find("k")) {
+//       String skey = BTLEserial.readString();
+//       char *ckey = &skey[0];
+//       
+//     }
     
   }
 
   // close lock and reset lights after x seconds
-  if (openTime && millis() - openTime > 4000) {
-    resetLock();
+  if (openTime && millis() - openTime > 8000) {
+    closeLock();
   }
-  
+
 }
 
-void openLock(int code) {
+void openLock(long code) {
   openTime = millis();  // set even if bad code so we can reset the lights
-  if (code == secret) { 
+  if (code == secret) {
     // open the lock
-    Serial.println("Code matches, opening lock");
-    digitalWrite(GREEN_LED_PIN, HIGH); 
-    digitalWrite(RED_LED_PIN, LOW);     
+    Serial.println("Opening lock");
+    digitalWrite(GREEN_LED_PIN, HIGH);
+    digitalWrite(RED_LED_PIN, LOW);
     digitalWrite(LOCK_PIN, HIGH); // open the lock
-    BTLEserial.println("unlocked");    
+    BTLEserial.println("unlocked");
   } else {
     // bad code, don't open
     Serial.println("Invalid code " + code);
     digitalWrite(RED_LED_PIN, HIGH);
-    BTLEserial.println("invalid code");       
+    BTLEserial.println("invalid code");
   }
 }
 
 // closes the lock and resets the lights
-void resetLock() { 
+void closeLock() {
   // reset the lights
-  digitalWrite(RED_LED_PIN, LOW); 
+  digitalWrite(RED_LED_PIN, LOW);
   digitalWrite(GREEN_LED_PIN, LOW);
   digitalWrite(LOCK_PIN, LOW); // close the lock
   BTLEserial.println("locked");
